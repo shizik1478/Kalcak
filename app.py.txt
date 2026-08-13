@@ -1,0 +1,74 @@
+from flask import Flask, request, jsonify
+import requests
+import os
+import json
+import re
+
+app = Flask(__name__)
+
+TOKEN = "8997435855:AAF2AkcieOQ3a_fHGTuVqA2fCPZmnb7-a30"
+GROUP_ID = "-1003920918666"
+
+# === НАСТРОЙКА WEBHOOK ===
+WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL", "https://kalyanich-bot.onrender.com") + "/webhook"
+
+def set_webhook():
+    url = f"https://api.telegram.org/bot{TOKEN}/setWebhook"
+    params = {"url": WEBHOOK_URL}
+    response = requests.get(url, params=params)
+    print("Webhook установлен:", response.json())
+
+# === ОБРАБОТКА ВХОДЯЩИХ СООБЩЕНИЙ ===
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    update = request.get_json()
+    if not update:
+        return "OK", 200
+
+    if "message" in update:
+        msg = update["message"]
+        chat_id = str(msg["chat"]["id"])
+        user_id = str(msg["from"]["id"])
+        text = msg.get("text", "")
+        name = msg["chat"].get("first_name", "Клиент")
+        username = msg["chat"].get("username", "")
+
+        # === ЛИЧКА (покупатель) ===
+        if chat_id != GROUP_ID:
+            if text == "/start":
+                send_message(chat_id, f"👋 Привет, {name}!")
+            else:
+                profile_text = f"ID: {user_id}\n@{username if username else '—'}\n{text}"
+                send_message(GROUP_ID, profile_text)
+                send_message(chat_id, "✅ Отправлено!")
+
+        # === ГРУППА (ответ сотрудника) ===
+        elif chat_id == GROUP_ID:
+            reply_to = msg.get("reply_to_message")
+            if reply_to:
+                original_text = reply_to.get("text", "")
+                match = re.search(r"ID: (\d+)", original_text)
+                if match:
+                    client_id = match.group(1)
+                    send_message(client_id, f"📨 {text}")
+                    send_message(chat_id, "✅ Ответ отправлен!")
+
+    return "OK", 200
+
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    data = {"chat_id": chat_id, "text": text}
+    try:
+        requests.post(url, json=data)
+    except Exception as e:
+        print(f"Ошибка: {e}")
+
+@app.route("/")
+def home():
+    return "Бот работает!", 200
+
+if __name__ == "__main__":
+    # Устанавливаем вебхук при запуске
+    set_webhook()
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
